@@ -43,6 +43,7 @@ typedef struct
     uint8_t destination;
     uint16_t curr_val;
     bool running;
+    uint8_t counter;
 } amy_volume_envelope;
 
 typedef struct
@@ -57,6 +58,7 @@ typedef struct
     uint16_t destination;
     uint32_t curr_val;
     bool running;
+    uint8_t counter;
 } amy_freq_envelope;
 
 typedef struct
