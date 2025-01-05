@@ -16,8 +16,11 @@ extern "C" {
 
 #define AMY_NUM_REGISTERS 4
 
-#define AMY_SIN_ROM_SIZE 4096
-#define AMY_EXP_ROM_SIZE 4096
+#define AMY_OCTAVE_SPLITTER_ROM_SIZE 0x20 /*WTF is this ROM*/
+#define AMY_BASE_EXP_ROM_SIZE 0x60
+#define AMY_INTERPOLATION_EXP_ROM_SIZE 0x80
+#define AMY_BASE_SIN_ROM_SIZE 0x100
+#define AMY_INTERPOLATION_SIN_ROM_SIZE 0x200
 
 #define AMY_FREQ_ENV_BREAKPOINT_CMD_CODE 0b00001000
 #define AMY_VOICE_TYPE_CMD_CODE 0b00010000
@@ -65,6 +68,7 @@ typedef struct
 {
     amy_freq_envelope env;
     uint8_t type;
+    uint32_t phase; //accumulator, 20 bits
 } amy_channel;
 
 typedef struct
@@ -77,8 +81,11 @@ typedef struct
 
 typedef struct
 {
-    uint16_t sin_rom[AMY_SIN_ROM_SIZE];
-    uint16_t exp_rom[AMY_EXP_ROM_SIZE];
+    uint8_t octave_splitter_rom[AMY_OCTAVE_SPLITTER_ROM_SIZE];
+    uint16_t base_exp_rom[AMY_BASE_EXP_ROM_SIZE];
+    uint8_t int_exp_rom[AMY_INTERPOLATION_EXP_ROM_SIZE];
+    uint32_t base_sin_rom[AMY_BASE_SIN_ROM_SIZE];
+    uint8_t int_sin_rom[AMY_INTERPOLATION_SIN_ROM_SIZE];
 
     amy_noise_generator noise_gen[AMY_NUM_NOISE_GENERATORS];
     amy_channel chan[AMY_NUM_CHANNELS];
