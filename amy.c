@@ -1,5 +1,11 @@
 #include "amy.h"
 
+uint8_t amy_sample_cycles[4] = { 128, 32, 8, 2 };
+#define AMY_SLOPE_TO_SAMPLE_CYCLES(slope) amy_sample_cycles[(slope >> 5) & 3]
+
+#define my_min(a,b) (((a)<(b))?(a):(b))
+#define my_max(a,b) (((a)>(b))?(a):(b))
+
 //taken directly from AMY-1 netlists
 
 uint8_t octave_splitter_rom_global[AMY_OCTAVE_SPLITTER_ROM_SIZE] = 
@@ -238,9 +244,33 @@ uint8_t amy_read_reg_c(AMY* amy)
     return amy->reg_c;
 }
 
+uint16_t amy_slope_to_step(uint8_t slope)
+{
+    uint8_t slope_signed = ((slope & 0x1f) << 3); 
+    
+    return (((slope & 0x80) && !(slope & 0x10)) ? -1 : 1) * ((*(int8_t*)&slope_signed / 8)); /*WTF is this*/
+}
+
 void amy_clock(AMY* amy) //one sound sample
 {
+    for(int i = 0; i < amy->forty_harm ? 40 : AMY_NUM_HARMONIC_OSCILLATORS; i++)
+    {
+        amy_harmonic_oscillator* harm_osc = &amy->harm_osc[i];
 
+        if(harm_osc->env.running)
+        {
+            harm_osc->env.counter++;
+
+            if(harm_osc->env.counter >= AMY_SLOPE_TO_SAMPLE_CYCLES(harm_osc->env.slope)) //destination resolution 1/4 dB, but datsheet says that step resolution is 1/128 dB
+            {
+                harm_osc->env.counter = 0;
+
+                harm_osc->env.curr_val += my_min(((uint16_t)harm_osc->env.destination << 5) - harm_osc->env.curr_val, amy_slope_to_step(harm_osc->env.slope));
+
+                if(harm_osc->env.curr_val == ((uint16_t)harm_osc->env.destination << 5)) harm_osc->env.running = false;
+            }
+        }
+    }
 }
 
 void amy_fill_buffer(AMY* amy, int16_t* buffer, uint32_t length)
