@@ -1,5 +1,7 @@
 #include "amy.h"
 
+//default clock speed is 4 MHz but it can be clocked up to 10 MHz
+
 uint8_t amy_sample_cycles[4] = { 128, 32, 8, 2 };
 #define AMY_SLOPE_TO_SAMPLE_CYCLES(slope) amy_sample_cycles[(slope >> 5) & 3]
 
@@ -197,6 +199,7 @@ void amy_write_reg_command(AMY* amy, uint8_t data)
 {
     if((data & AMY_FREQ_ENV_BREAKPOINT_CMD_MASK) == AMY_FREQ_ENV_BREAKPOINT_CMD_CODE)
     {
+        //0 slope = immediate change
         return;
     }
     if((data & AMY_VOICE_TYPE_CMD_MASK) == AMY_VOICE_TYPE_CMD_CODE)
@@ -217,6 +220,7 @@ void amy_write_reg_command(AMY* amy, uint8_t data)
     }
     if((data & AMY_VOL_ENV_BREAKPOINT_CMD_MASK) == AMY_VOL_ENV_BREAKPOINT_CMD_CODE)
     {
+        //0 slope = immediate change
         return;
     }
     if((data & AMY_HARM_PAIR_NOISE_RAM_CMD_MASK) == AMY_HARM_PAIR_NOISE_RAM_CMD_CODE)
@@ -244,11 +248,52 @@ uint8_t amy_read_reg_c(AMY* amy)
     return amy->reg_c;
 }
 
-uint16_t amy_slope_to_step(uint8_t slope)
+uint16_t amy_slope_to_step_vol(uint8_t slope)
 {
     uint8_t slope_signed = ((slope & 0x1f) << 3); 
     
     return (((slope & 0x80) && !(slope & 0x10)) ? -1 : 1) * ((*(int8_t*)&slope_signed / 8)); /*WTF is this*/
+}
+
+uint16_t amy_slope_to_step_pitch(uint8_t slope)
+{
+    uint8_t slope_signed = ((slope & 0x1f) << 3); 
+    
+    return (((slope & 0x80) && !(slope & 0x10)) ? -1 : 1) * (((*(int8_t*)&slope_signed / 8)) + ((slope == 0x7f || slope == 0xE1) ? 1 : 0)); /*WTF is this*/
+}
+
+//get 1st quarter of sine
+uint16_t get_sin_rom_aux(AMY* amy, uint16_t phase)
+{
+    return (((uint32_t)amy->base_sin_rom[phase >> 4] + (uint32_t)amy->int_sin_rom[((((0x100 * 0x10 - phase) / 0x100) & 15) << 4) + (phase & 15)] * 0x40) >> 5);
+}
+
+//this one converts 20-bit phase (14 MSBs of it) to sine wave using sine ROMs
+//13-bit signed output?
+int16_t get_sin_rom(AMY* amy, uint32_t phase)
+{
+    switch(phase >> (12 + 6)) //two MSBs tell shich quarter of sine wave is used
+    {
+        case 0:
+        {
+            return get_sin_rom_aux(amy, (phase >> 6)); break;
+        }
+        case 1:
+        {
+            return get_sin_rom_aux(amy, (1 << 12) - (phase >> 6)); break;
+        }
+        case 2:
+        {
+            return -1 * get_sin_rom_aux(amy, (phase >> 6) - (1 << 13)); break;
+        }
+        case 3:
+        {
+            return -1 * get_sin_rom_aux(amy, (1 << 14) - (phase >> 6)); break;
+        }
+        default: break;
+    }
+
+    return 0;
 }
 
 void amy_clock(AMY* amy) //one sound sample
@@ -261,15 +306,35 @@ void amy_clock(AMY* amy) //one sound sample
         {
             harm_osc->env.counter++;
 
-            if(harm_osc->env.counter >= AMY_SLOPE_TO_SAMPLE_CYCLES(harm_osc->env.slope)) //destination resolution 1/4 dB, but datsheet says that step resolution is 1/128 dB
+            if(harm_osc->env.counter >= AMY_SLOPE_TO_SAMPLE_CYCLES(harm_osc->env.slope)) //destination resolution 1/4 dB, but datasheet says that step resolution is 1/128 dB
             {
                 harm_osc->env.counter = 0;
 
-                harm_osc->env.curr_val += my_min(((uint16_t)harm_osc->env.destination << 5) - harm_osc->env.curr_val, amy_slope_to_step(harm_osc->env.slope));
+                harm_osc->env.curr_val += my_min(((uint16_t)harm_osc->env.destination << 5) - harm_osc->env.curr_val, amy_slope_to_step_vol(harm_osc->env.slope));
 
                 if(harm_osc->env.curr_val == ((uint16_t)harm_osc->env.destination << 5)) harm_osc->env.running = false;
             }
         }
+    }
+
+    for(int i = 0; i < AMY_NUM_CHANNELS; i++)
+    {
+        amy_channel* ch = &amy->chan[i];
+
+        if(ch->env.running)
+        {
+            ch->env.counter++;
+
+            if(ch->env.counter >= AMY_SLOPE_TO_SAMPLE_CYCLES(ch->env.slope)) //destination resolution 1/64th of semitone, but datasheet says that step resolution is 1/2048th of semitone
+            {
+                ch->env.counter = 0;
+
+                ch->env.curr_val += my_min(((uint16_t)ch->env.destination << 5) - ch->env.curr_val, amy_slope_to_step_pitch(ch->env.slope));
+
+                if(ch->env.curr_val == ((uint16_t)ch->env.destination << 5)) ch->env.running = false;
+            }
+        }
+        //TODO: synth channel signal
     }
 }
 
