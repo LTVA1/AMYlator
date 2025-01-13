@@ -262,6 +262,12 @@ uint16_t amy_slope_to_step_pitch(uint8_t slope)
     return (((slope & 0x80) && !(slope & 0x10)) ? -1 : 1) * (((*(int8_t*)&slope_signed / 8)) + ((slope == 0x7f || slope == 0xE1) ? 1 : 0)); /*WTF is this*/
 }
 
+//get exponent
+uint16_t get_exp_rom(AMY* amy, uint16_t val)
+{
+    return (((uint32_t)amy->base_exp_rom[val >> 3] + (uint32_t)amy->int_exp_rom[(((val / 0x40) & 15) << 3) + (val & 7)] * 0x10) >> 3);
+}
+
 //get 1st quarter of sine
 uint16_t get_sin_rom_aux(AMY* amy, uint16_t phase)
 {
