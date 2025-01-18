@@ -200,35 +200,89 @@ void amy_write_reg_command(AMY* amy, uint8_t data)
     if((data & AMY_FREQ_ENV_BREAKPOINT_CMD_MASK) == AMY_FREQ_ENV_BREAKPOINT_CMD_CODE)
     {
         //0 slope = immediate change
+        if(amy->reg_a == 0)
+        {
+            amy->chan[data & 7].env.running = false;
+            amy->chan[data & 7].env.destination = amy->reg_c | ((uint16_t)amy->reg_b << 5);
+            amy->chan[data & 7].env.curr_val = ((uint32_t)amy->reg_c | ((uint32_t)amy->reg_b << 5)) << 5;
+            return;
+        }
+
+        amy->chan[data & 7].env.slope = amy->reg_a;
+        amy->chan[data & 7].env.destination = amy->reg_c | ((uint16_t)amy->reg_b << 5);
+        amy->chan[data & 7].env.running = true;
         return;
     }
     if((data & AMY_VOICE_TYPE_CMD_MASK) == AMY_VOICE_TYPE_CMD_CODE)
     {
+        amy->chan[data & 7].type = amy->reg_a & 3;
         return;
     }
     if((data & AMY_READ_CURR_FREQ_CMD_MASK) == AMY_READ_CURR_FREQ_CMD_CODE)
     {
+        amy->reg_c = (amy->chan[data & 7].env.curr_val >> 5) & 0xff;
+        amy->reg_b = (amy->chan[data & 7].env.curr_val >> (5 + 8)) & 0x1f;
         return;
     }
     if((data & AMY_SYSTEM_OPTIONS_CMD_MASK) == AMY_SYSTEM_OPTIONS_CMD_CODE)
     {
+        amy->ale_mode = data & 1;
+        amy->int_mode = data & 2;
+        amy->individual_mode = data & 4;
+        amy->forty_harm = data & 8;
         return;
     }
     if((data & AMY_CONTROL_CMD_MASK) == AMY_CONTROL_CMD_CODE)
     {
+        amy->seq_reset = data & 1;
+
+        if(!(amy->seq_reset))
+        {
+            //TODO: reset phase of all oscillators of selected voices???
+        }
+
+        amy->nzinit = data & 2;
         return;
     }
     if((data & AMY_VOL_ENV_BREAKPOINT_CMD_MASK) == AMY_VOL_ENV_BREAKPOINT_CMD_CODE)
     {
         //0 slope = immediate change
+        if(amy->reg_a == 0)
+        {
+            amy->harm_osc[data & 63].env.running = false;
+            amy->harm_osc[data & 63].env.destination = amy->reg_c;
+            amy->harm_osc[data & 63].env.curr_val = (uint16_t)amy->reg_c << 5;
+            return;
+        }
+
+        amy->harm_osc[data & 63].env.slope = amy->reg_a;
+        amy->harm_osc[data & 63].env.destination = amy->reg_c;
+        amy->harm_osc[data & 63].env.running = true;
         return;
     }
     if((data & AMY_HARM_PAIR_NOISE_RAM_CMD_MASK) == AMY_HARM_PAIR_NOISE_RAM_CMD_CODE)
     {
-        return;
+        if(amy->nzinit)
+        {
+            //TODO: figure out what the fuck is noise RAM actually!
+            return;
+        }
+        else
+        {
+            //write last harmonic pair flag...
+            amy->harmonic_pair_flags &= ~(1 << (((data >> 1)) & 0x1f));
+
+            if(data & 1)
+            {
+                amy->harmonic_pair_flags |= (1 << (((data >> 1)) & 0x1f));
+            }
+            
+            return;
+        }
     }
     if((data & AMY_READ_CURR_VOL_ENV_CMD_MASK) == AMY_READ_CURR_VOL_ENV_CMD_CODE)
     {
+        amy->reg_c = (amy->harm_osc[data & 63].env.curr_val >> 5) & 0xff;
         return;
     }
 }
@@ -304,7 +358,7 @@ int16_t get_sin_rom(AMY* amy, uint32_t phase)
 
 void amy_clock(AMY* amy) //one sound sample
 {
-    for(int i = 0; i < amy->forty_harm ? 40 : AMY_NUM_HARMONIC_OSCILLATORS; i++)
+    for(int i = 0; i < (amy->forty_harm ? 40 : AMY_NUM_HARMONIC_OSCILLATORS); i++)
     {
         amy_harmonic_oscillator* harm_osc = &amy->harm_osc[i];
 
@@ -335,13 +389,19 @@ void amy_clock(AMY* amy) //one sound sample
             {
                 ch->env.counter = 0;
 
-                ch->env.curr_val += my_min(((uint16_t)ch->env.destination << 5) - ch->env.curr_val, amy_slope_to_step_pitch(ch->env.slope));
+                ch->env.curr_val += my_min(((uint32_t)ch->env.destination << 5) - ch->env.curr_val, amy_slope_to_step_pitch(ch->env.slope));
 
-                if(ch->env.curr_val == ((uint16_t)ch->env.destination << 5)) ch->env.running = false;
+                if(ch->env.curr_val == ((uint32_t)ch->env.destination << 5)) ch->env.running = false;
             }
         }
-        //TODO: synth channel signal
+        
+        ch->phase += ch->env.curr_val;
+        ch->phase &= ((1 << AMY_ACC_BITS) - 1);
+
+        //TODO: calc the phase for each harmonic, apply their volume envelopes and stuff
     }
+
+    //TODO: mysterious noise gen!
 }
 
 void amy_fill_buffer(AMY* amy, int16_t* buffer, uint32_t length)
