@@ -207,11 +207,11 @@ AMY* amy_create()
 void amy_reset(AMY* amy)
 {
     memset((void*)amy, 0, sizeof(AMY));
-    memcpy(octave_splitter_rom_global, amy->octave_splitter_rom, AMY_OCTAVE_SPLITTER_ROM_SIZE * sizeof(amy->octave_splitter_rom[0]));
-    memcpy(base_exp_rom_global, amy->base_exp_rom, AMY_BASE_EXP_ROM_SIZE * sizeof(amy->base_exp_rom[0]));
-    memcpy(int_exp_rom_global, amy->int_exp_rom, AMY_INTERPOLATION_EXP_ROM_SIZE * sizeof(amy->int_exp_rom[0]));
-    memcpy(base_sin_rom_global, amy->base_sin_rom, AMY_BASE_SIN_ROM_SIZE * sizeof(amy->base_sin_rom[0]));
-    memcpy(int_sin_rom_global, amy->int_sin_rom, AMY_INTERPOLATION_SIN_ROM_SIZE * sizeof(amy->int_sin_rom[0]));
+    memcpy(amy->octave_splitter_rom, octave_splitter_rom_global, AMY_OCTAVE_SPLITTER_ROM_SIZE * sizeof(amy->octave_splitter_rom[0]));
+    memcpy(amy->base_exp_rom, base_exp_rom_global, AMY_BASE_EXP_ROM_SIZE * sizeof(amy->base_exp_rom[0]));
+    memcpy(amy->int_exp_rom, int_exp_rom_global, AMY_INTERPOLATION_EXP_ROM_SIZE * sizeof(amy->int_exp_rom[0]));
+    memcpy(amy->base_sin_rom, base_sin_rom_global, AMY_BASE_SIN_ROM_SIZE * sizeof(amy->base_sin_rom[0]));
+    memcpy(amy->int_sin_rom, int_sin_rom_global, AMY_INTERPOLATION_SIN_ROM_SIZE * sizeof(amy->int_sin_rom[0]));
 }
 
 void amy_free(AMY* amy)
@@ -242,13 +242,13 @@ void amy_write_reg_command(AMY* amy, uint8_t data)
         if(amy->reg_a == 0)
         {
             amy->chan[data & 7].env.running = false;
-            amy->chan[data & 7].env.destination = amy->reg_c | ((uint16_t)amy->reg_b << 5);
-            amy->chan[data & 7].env.curr_val = ((uint32_t)amy->reg_c | ((uint32_t)amy->reg_b << 5)) << 5;
+            amy->chan[data & 7].env.destination = amy->reg_c | ((uint16_t)amy->reg_b << 8);
+            amy->chan[data & 7].env.curr_val = ((uint32_t)amy->reg_c | ((uint32_t)amy->reg_b << 8)) << 5;
             return;
         }
 
         amy->chan[data & 7].env.slope = amy->reg_a;
-        amy->chan[data & 7].env.destination = amy->reg_c | ((uint16_t)amy->reg_b << 5);
+        amy->chan[data & 7].env.destination = amy->reg_c | ((uint16_t)amy->reg_b << 8);
         amy->chan[data & 7].env.running = true;
         return;
     }
@@ -364,14 +364,14 @@ uint16_t get_exp_rom(AMY* amy, uint16_t val)
 //get 1st quarter of sine
 uint16_t get_sin_rom_aux(AMY* amy, uint16_t phase)
 {
-    return (((uint32_t)amy->base_sin_rom[phase >> 4] + (uint32_t)amy->int_sin_rom[((((0x100 * 0x10 - phase) / 0x100) & 15) << 4) + (phase & 15)] * 0x40) >> 5);
+    return ((uint32_t)amy->base_sin_rom[phase >> 4] + ((uint32_t)amy->int_sin_rom[((((0x100 * 0x10 - phase) / 0x100) & 15) << 4) + (phase & 15)] * 0x40)) >> 5;
 }
 
 //this one converts 20-bit phase (14 MSBs of it) to sine wave using sine ROMs
 //13-bit signed output?
 int16_t get_sin_rom(AMY* amy, uint32_t phase)
 {
-    switch(phase >> (12 + 6)) //two MSBs tell shich quarter of sine wave is used
+    switch(phase >> (12 + 6)) //two MSBs tell which quarter of sine wave is used
     {
         case 0:
         {
@@ -379,15 +379,18 @@ int16_t get_sin_rom(AMY* amy, uint32_t phase)
         }
         case 1:
         {
-            return get_sin_rom_aux(amy, (1 << 12) - (phase >> 6)); break;
+            //return get_sin_rom_aux(amy, (1 << 11) - (phase >> 8)); break;
+            return get_sin_rom_aux(amy, (1 << 13) - (phase >> 6)); break;
         }
         case 2:
         {
-            return -1 * get_sin_rom_aux(amy, (phase >> 6) - (1 << 13)); break;
+            //return -1 * get_sin_rom_aux(amy, (phase >> 8) - (1 << 12)); break;
+            return -1 * (int16_t)get_sin_rom_aux(amy, (phase >> 6) & 0xfff); break; //wtf why it works?
         }
         case 3:
         {
-            return -1 * get_sin_rom_aux(amy, (1 << 14) - (phase >> 6)); break;
+            //return -1 * get_sin_rom_aux(amy, (1 << 13) - (phase >> 8)); break;
+            return -1 * (int16_t)get_sin_rom_aux(amy, (1 << 14) - ((phase >> 6))); break;
         }
         default: break;
     }
@@ -458,7 +461,8 @@ void amy_clock(AMY* amy) //one sound sample
             //TODO: remove harmonic multiplier and replace it with a proper EXP ROM calc
             uint32_t final_phase = ch->phase * (harm_index + 1) + ((uint32_t)amy_reverse_byte(harm_index << 2) << 14);
             final_phase &= (1 << 20) - 1;
-
+            
+            //todo: return final phase
             amy->channel_output[i] += get_sin_rom(amy, final_phase) / 4;
         }
 
